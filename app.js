@@ -1,5 +1,5 @@
 const { body, validationResult } = require("express-validator");
-const pool = require("./db/pool");
+const pool = require("./db/prisma");
 const session = require("express-session");
 const passport = require("passport");
 const bcrypt = require("bcryptjs")
@@ -92,15 +92,44 @@ passport.deserializeUser(async (id, done) => {
 });
 
 /**
- *  -------------------- ROUTER AND SERVER --------------------
+ *  -------------------- ROUTER--------------------
  */
 
 //serve index router when root is visited
 const indexRouter = require("./routes/indexRouter");
 app.use("/",indexRouter);
 
+/**
+ * -------------------- ERROR HANDLING --------------------
+ */
+
+app.use((err, req, res, next) => {
+  if (err.code === 'P2002') {
+    return res.status(409).json({ message: 'Username already exists' });
+  }
+
+  console.error(err); // Log unexpected errors
+  res.status(500).json({ message: 'Something went wrong' });
+});
+
+/**
+ *  -------------------- SERVER --------------------
+ */
+
 //starts the server and listens on port 3000
 const PORT = 3000;
-app.listen(PORT, () => {
+const server = app.listen(PORT, () => {
   console.log(`My Express app - listening on port ${PORT}!`);
 });
+
+const shutdown = async () => {
+  console.log("Shutting down server...");
+  await prisma.$disconnect();
+  server.close(() => {
+    console.log("HTTP server closed.");
+    process.exit(0);
+  });
+};
+
+process.on("SIGINT", shutdown);
+process.on("SIGTERM", shutdown);
