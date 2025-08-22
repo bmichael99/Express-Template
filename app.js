@@ -1,10 +1,10 @@
 const { body, validationResult } = require("express-validator");
-const pool = require("./db/prisma");
+const prisma = require("./db/prisma");
 const session = require("express-session");
 const passport = require("passport");
 const bcrypt = require("bcryptjs")
 const LocalStrategy = require('passport-local').Strategy;
-const pgSession = require('connect-pg-simple')(session);
+const { PrismaSessionStore } = require('@quixo3/prisma-session-store');
 require('dotenv').config();
 
 
@@ -29,16 +29,22 @@ app.use(express.static(assetsPath));
 //parse form data into req.body
 app.use(express.urlencoded({ extended: true }));
 
+//for postman testing, can now parse json into req.body object
+app.use(express.json());
+
 
 /**
  *  -------------------- PASSPORT SETUP --------------------
  */
 
-const sessionStore = new pgSession({
-    pool : pool,                // Connection pool
-    createTableIfMissing : true,
-    // Insert other connect-pg-simple options here
-  });
+const sessionStore = new PrismaSessionStore(
+      prisma,
+      {
+        checkPeriod: 2 * 60 * 1000,  //ms
+        dbRecordIdIsSessionId: false,
+        dbRecordIdFunction: undefined,
+      }
+    );
 
 //passport setup
 app.use(session({
@@ -58,15 +64,19 @@ app.use(express.urlencoded({ extended: false }));
 passport.use(
   new LocalStrategy(async (username, password, done) => {
     try {
-      const { rows } = await pool.query("SELECT * FROM users WHERE username = $1", [username]);
-      const user = rows[0];
+
+      const user = await prisma.user.findUnique({
+        where: {username: username}
+      });
 
       if (!user) {
-        return done(null, false, { message: "Incorrect username" });
+        //req.flash("errors", "Incorrect username, sign up instead?");
+        return done(null, false, { message: "Incorrect username, sign up instead?" });
       }
       const match = await bcrypt.compare(password, user.password);
       if (!match) {
         // passwords do not match!
+        //req.flash("errors", "Incorrect password");
         return done(null, false, { message: "Incorrect password" })
       }
       return done(null, user);
@@ -82,14 +92,21 @@ passport.serializeUser((user, done) => {
 
 passport.deserializeUser(async (id, done) => {
   try {
-    const { rows } = await pool.query("SELECT * FROM users WHERE id = $1", [id]);
-    const user = rows[0];
+    const user = await prisma.user.findUnique({
+        where: {id: id}
+      });
 
     done(null, user);
   } catch(err) {
     done(err);
   }
 });
+
+//middleware for providing user data to all authenticated EJS files
+app.use((req,res,next) => {
+  res.locals.user = req.isAuthenticated ? (req.isAuthenticated() ? req.user : null) : null;
+  next();
+})
 
 /**
  *  -------------------- ROUTER--------------------
